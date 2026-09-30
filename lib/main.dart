@@ -1,16 +1,47 @@
 import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
+import 'role_selection_screen.dart';
+import 'services/auth_service.dart';
+
 void main() {
-  runApp(const StudentPayApp());
+  // ---------------------------------------------------------------
+  // PRE-SEED DEFAULT ACCOUNTS
+  // Runs once at app startup. Creates a default vendor + employee
+  // so you can log in immediately without using the Admin flow.
+  //
+  // Default credentials after seeding:
+  //   Admin    →  admin    / admin123
+  //   Vendor   →  vendor1  / vendor1
+  //   Employee →  emp1     / emp1
+  //
+  // NOTE: AuthService is in-memory only. Accounts disappear on
+  // every hot restart / app relaunch. That is why we seed here.
+  // ---------------------------------------------------------------
+
+  final auth = AuthService.instance;
+
+  if (!auth.vendorUsernameExists('vendor1')) {
+    final vendor = auth.addVendor(
+      username: 'vendor1',
+      password: 'vendor1',
+    );
+
+    auth.addEmployee(
+      vendorId: vendor.id,
+      username: 'emp1',
+      password: 'emp1',
+    );
+  }
+
+  runApp(const MyApp());
 }
 
-class StudentPayApp extends StatelessWidget {
-  const StudentPayApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'StudentPay',
+      title: 'Admin Vendor Employee System',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -20,14 +51,8 @@ class StudentPayApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFF8FAFC),
         fontFamily: 'Roboto',
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          foregroundColor: Color(0xFF1E293B),
-          centerTitle: false,
-        ),
       ),
-      home: const HomeScreen(),
+      home: const RoleSelectionScreen(),
     );
   }
 }
