@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import '../models/employee.dart';
 import '../models/transaction.dart';
 import '../services/api_service.dart';
 import '../widgets/transaction_row.dart';
 import 'scanner_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final Employee employee;
+  const HomeScreen({super.key, required this.employee});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -14,7 +16,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final ApiService _api = ApiService.instance;
 
-  /// Map roll -> {transaction, status}
+  /// Map roll -> transaction (only active/non-redeemed, for THIS vendor only)
   final Map<String, Transaction> _transactions = {};
   final Map<String, RowStatus> _statuses = {};
 
@@ -28,24 +30,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _listenToTransactions() {
-    _api.streamTransactions().listen((txList) {
+    _api
+        .streamTransactions(vendorId: widget.employee.vendorId)
+        .listen((txList) {
       if (!mounted) return;
       setState(() {
+        // Build a set of roll numbers currently active in Firestore
+        final activeRolls = <String>{};
         for (final tx in txList) {
-          if (!tx.redeemed) {
-            // Keep existing status if row was already pending or saving
-            final currentStatus = _statuses[tx.rollNumber];
-            if (currentStatus != RowStatus.saving &&
-                currentStatus != RowStatus.redeeming) {
-              _transactions[tx.rollNumber] = tx;
-              _statuses[tx.rollNumber] = RowStatus.saved;
-            }
-          } else {
-            // If redeemed in backend, remove from active list
-            _transactions.remove(tx.rollNumber);
-            _statuses.remove(tx.rollNumber);
+          activeRolls.add(tx.rollNumber);
+          final currentStatus = _statuses[tx.rollNumber];
+          if (currentStatus != RowStatus.saving &&
+              currentStatus != RowStatus.redeeming) {
+            _transactions[tx.rollNumber] = tx;
+            _statuses[tx.rollNumber] = RowStatus.saved;
           }
         }
+        // Remove any rows that were redeemed/disappeared from Firestore
+        _transactions.removeWhere(
+          (roll, tx) =>
+              tx.id != null && !activeRolls.contains(roll),
+        );
+        _statuses.removeWhere(
+          (roll, _) =>
+              _transactions[roll]?.id != null &&
+              !activeRolls.contains(roll),
+        );
         _isLoading = false;
       });
     }, onError: (err) {
@@ -75,7 +85,11 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       setState(() {
-        _transactions[roll] = Transaction(rollNumber: roll, amount: 0);
+        _transactions[roll] = Transaction(
+          rollNumber: roll,
+          amount: 0,
+          vendorId: widget.employee.vendorId,
+        );
         _statuses[roll] = RowStatus.pending;
       });
 
@@ -157,6 +171,77 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ---------- Delete ----------
+  Future<void> _deleteTransaction(String roll) async {
+    final tx = _transactions[roll]!;
+    // If not yet saved to Firestore (pending), just remove locally
+    if (tx.id == null) {
+      setState(() {
+        _transactions.remove(roll);
+        _statuses.remove(roll);
+      });
+      return;
+    }
+    // Otherwise delete from Firestore — the stream will auto-remove it from UI
+    try {
+      await _api.deleteTransaction(tx.id!);
+      _showSnack('Roll $roll removed.', color: Colors.grey.shade700);
+    } catch (e) {
+      _showSnack('Failed to delete: $e', color: Colors.red.shade700);
+    }
+  }
+
+  // ---------- Clear All ----------
+  Future<void> _clearAll() async {
+    if (_transactions.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear All'),
+        content: const Text(
+            'Remove all transactions from this list? Saved entries will be permanently deleted from the database.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    // Collect Firestore IDs of saved transactions
+    final savedIds = _transactions.values
+        .where((tx) => tx.id != null)
+        .map((tx) => tx.id!)
+        .toList();
+
+    // Remove locally immediately for instant UI feedback
+    setState(() {
+      _transactions.clear();
+      _statuses.clear();
+    });
+
+    // Delete saved ones from Firestore
+    if (savedIds.isNotEmpty) {
+      try {
+        await _api.deleteTransactions(savedIds);
+      } catch (e) {
+        _showSnack('Some items may not have been deleted: $e',
+            color: Colors.red.shade700);
+      }
+    }
+  }
+
   // ---------- Helpers ----------
   String _formatAmount(double v) {
     if (v.truncateToDouble() == v) return v.toStringAsFixed(0);
@@ -205,12 +290,32 @@ class _HomeScreenState extends State<HomeScreen> {
                           itemCount: rolls.length,
                           itemBuilder: (context, i) {
                             final roll = rolls[i];
-                            return TransactionRow(
+                            final status =
+                                _statuses[roll] ?? RowStatus.pending;
+                            final isBusy = status == RowStatus.saving ||
+                                status == RowStatus.redeeming;
+                            return Dismissible(
                               key: ValueKey(roll),
-                              transaction: _transactions[roll]!,
-                              status: _statuses[roll] ?? RowStatus.pending,
-                              onSave: (amount) => _save(roll, amount),
-                              onRedeem: () => _redeem(roll),
+                              direction: DismissDirection.endToStart,
+                              confirmDismiss: (_) async {
+                                if (isBusy) return false;
+                                await _deleteTransaction(roll);
+                                return false; // stream handles removal
+                              },
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 20),
+                                color: const Color(0xFFDC2626),
+                                child: const Icon(Icons.delete_outline,
+                                    color: Colors.white, size: 28),
+                              ),
+                              child: TransactionRow(
+                                key: ValueKey('row_$roll'),
+                                transaction: _transactions[roll]!,
+                                status: status,
+                                onSave: (amount) => _save(roll, amount),
+                                onRedeem: () => _redeem(roll),
+                              ),
                             );
                           },
                         ),
@@ -238,10 +343,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: Colors.white, size: 24),
           ),
           const SizedBox(width: 12),
-          const Column(
+          Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              const Text(
                 'StudentPay',
                 style: TextStyle(
                   fontSize: 20,
@@ -250,8 +355,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               Text(
-                'QR Payment & Redemption',
-                style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                widget.employee.username,
+                style: const TextStyle(
+                    fontSize: 12, color: Color(0xFF64748B)),
               ),
             ],
           ),
@@ -279,8 +385,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(width: 6),
                 const Text(
                   'pending',
-                  style: TextStyle(
-                      fontSize: 12, color: Color(0xFF2563EB)),
+                  style:
+                      TextStyle(fontSize: 12, color: Color(0xFF2563EB)),
                 ),
               ],
             ),
@@ -321,15 +427,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(width: 12),
           OutlinedButton.icon(
-            onPressed: () {
-              setState(() {
-                _transactions.clear();
-                _statuses.clear();
-              });
-            },
-            icon: const Icon(Icons.refresh),
+            onPressed: _clearAll,
+            icon: const Icon(Icons.delete_sweep_outlined),
             label: const Text('Clear'),
             style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFDC2626),
+              side: const BorderSide(color: Color(0xFFDC2626)),
               padding: const EdgeInsets.symmetric(
                   vertical: 16, horizontal: 18),
               shape: RoundedRectangleBorder(

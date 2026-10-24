@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../models/employee.dart';
 import 'home_screen.dart';
 
 class EmployeeLoginScreen extends StatefulWidget {
@@ -29,22 +30,20 @@ class _EmployeeLoginScreenState extends State<EmployeeLoginScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 250));
 
-    final emp = AuthService.instance
-        .employeeLogin(_userCtrl.text, _passCtrl.text);
+    final Employee? emp = await AuthService.instance
+        .employeeLoginAsync(_userCtrl.text, _passCtrl.text);
 
     if (!mounted) return;
     setState(() => _loading = false);
 
     if (emp != null) {
-      // ⬇⬇⬇ YOUR EXISTING HomeScreen — untouched, unchanged.
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => HomeScreen(employee: emp)),
       );
     } else {
-      setState(() => _error =
-          'Invalid employee credentials. Please check and try again.');
+      setState(() =>
+          _error = 'Invalid employee credentials. Please check and try again.');
     }
   }
 
@@ -126,8 +125,8 @@ class _EmployeeLoginScreenState extends State<EmployeeLoginScreen> {
                             decoration: BoxDecoration(
                               color: const Color(0xFFFEF2F2),
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                  color: const Color(0xFFFECACA)),
+                              border:
+                                  Border.all(color: const Color(0xFFFECACA)),
                             ),
                             child: Row(
                               children: [

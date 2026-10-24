@@ -47,25 +47,28 @@ class ApiService {
     }
   }
 
-  /// Fetch all active (non-redeemed) transactions.
-  Future<List<Transaction>> fetchActiveTransactions() async {
-    try {
-      final snapshot = await _txCol
-          .where('redeemed', isEqualTo: false)
-          .orderBy('createdAt', descending: true)
-          .get();
-
-      return snapshot.docs
-          .map((doc) => Transaction.fromJson({...doc.data(), 'id': doc.id}))
-          .toList();
-    } catch (_) {
-      return [];
-    }
+  /// Permanently delete a transaction document from Firestore.
+  Future<void> deleteTransaction(String id) async {
+    await _txCol.doc(id).delete();
   }
 
-  /// Real-time stream of all transactions.
-  Stream<List<Transaction>> streamTransactions() {
-    return _txCol.snapshots().map((snapshot) {
+  /// Delete multiple transactions at once using a batch write.
+  Future<void> deleteTransactions(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final id in ids) {
+      batch.delete(_txCol.doc(id));
+    }
+    await batch.commit();
+  }
+
+  /// Real-time stream of active (non-redeemed) transactions for a specific vendor.
+  Stream<List<Transaction>> streamTransactions({required String vendorId}) {
+    return _txCol
+        .where('vendorId', isEqualTo: vendorId)
+        .where('redeemed', isEqualTo: false)
+        .snapshots()
+        .map((snapshot) {
       return snapshot.docs
           .map((doc) => Transaction.fromJson({...doc.data(), 'id': doc.id}))
           .toList();

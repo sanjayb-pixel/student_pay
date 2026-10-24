@@ -14,8 +14,6 @@ class VendorDashboardScreen extends StatefulWidget {
 }
 
 class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
-  void _refresh() => setState(() {});
-
   Future<void> _confirmDelete(Employee e) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -40,21 +38,31 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       ),
     );
 
-    if (ok == true) {
-      AuthService.instance.deleteEmployee(e.id);
-      _refresh();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Employee "${e.username}" deleted.'),
-          backgroundColor: const Color(0xFFDC2626),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    if (ok == true && mounted) {
+      try {
+        await AuthService.instance.deleteEmployee(e.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Employee "${e.username}" deleted.'),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } catch (err) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete employee: $err'),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
-  Future<void> _editEmployee(Employee e) async {
+  Future<void> _editEmployee(Employee e, List<Employee> allEmployees) async {
     final userCtrl = TextEditingController(text: e.username);
     final passCtrl = TextEditingController(text: e.password);
     final formKey = GlobalKey<FormState>();
@@ -116,7 +124,8 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
               ),
               onPressed: () {
                 if (!formKey.currentState!.validate()) return;
-                if (AuthService.instance.employeeUsernameExists(
+                if (AuthService.instance.employeeUsernameExistsInList(
+                  allEmployees,
                   widget.vendor.id,
                   userCtrl.text,
                   ignoreId: e.id,
@@ -138,29 +147,36 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       ),
     );
 
-    if (saved == true) {
-      AuthService.instance.updateEmployee(
-        e.id,
-        username: userCtrl.text,
-        password: passCtrl.text,
-      );
-      _refresh();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Employee updated successfully.'),
-          backgroundColor: Color(0xFF16A34A),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    if (saved == true && mounted) {
+      try {
+        await AuthService.instance.updateEmployee(
+          e.id,
+          username: userCtrl.text,
+          password: passCtrl.text,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Employee updated successfully.'),
+            backgroundColor: Color(0xFF16A34A),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } catch (err) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update employee: $err'),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final employees =
-        AuthService.instance.employeesOf(widget.vendor.id);
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
@@ -194,38 +210,55 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Welcome, ${widget.vendor.username}',
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${employees.length} employee${employees.length == 1 ? '' : 's'} registered',
-                    style: const TextStyle(
-                        fontSize: 13, color: Color(0xFF64748B)),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: employees.isEmpty
-                        ? _emptyState()
-                        : ListView.separated(
-                            itemCount: employees.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, i) {
-                              final e = employees[i];
-                              return _employeeCard(e);
-                            },
-                          ),
-                  ),
-                ],
+              child: StreamBuilder<List<Employee>>(
+                stream: AuthService.instance
+                    .employeesStream(widget.vendor.id),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text('Error: ${snapshot.error}',
+                          style:
+                              const TextStyle(color: Color(0xFFDC2626))),
+                    );
+                  }
+                  final employees = snapshot.data ?? [];
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Welcome, ${widget.vendor.username}',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${employees.length} employee${employees.length == 1 ? '' : 's'} registered',
+                        style: const TextStyle(
+                            fontSize: 13, color: Color(0xFF64748B)),
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(
+                        child: employees.isEmpty
+                            ? _emptyState()
+                            : ListView.separated(
+                                itemCount: employees.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 12),
+                                itemBuilder: (context, i) {
+                                  final e = employees[i];
+                                  return _employeeCard(e, employees);
+                                },
+                              ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -234,7 +267,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     );
   }
 
-  Widget _employeeCard(Employee e) {
+  Widget _employeeCard(Employee e, List<Employee> allEmployees) {
     return Card(
       elevation: 1.5,
       shape: RoundedRectangleBorder(
@@ -304,7 +337,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
               tooltip: 'Edit',
               icon: const Icon(Icons.edit_outlined,
                   color: Color(0xFF2563EB)),
-              onPressed: () => _editEmployee(e),
+              onPressed: () => _editEmployee(e, allEmployees),
             ),
             IconButton(
               tooltip: 'Delete',

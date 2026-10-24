@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/vendor.dart';
 import '../../services/auth_service.dart';
 import 'add_ventor_screen.dart';
+
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
 
@@ -11,15 +12,13 @@ class AdminDashboardScreen extends StatefulWidget {
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  void _refresh() => setState(() {});
-
   Future<void> _confirmDelete(Vendor v) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Vendor'),
         content: Text(
-            'Are you sure you want to delete "${v.username}"? This action cannot be undone.'),
+            'Are you sure you want to delete "${v.username}"? This will also delete all their employees. This action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -37,21 +36,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     );
 
-    if (ok == true) {
-      AuthService.instance.deleteVendor(v.id);
-      _refresh();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Vendor "${v.username}" deleted.'),
-          backgroundColor: const Color(0xFFDC2626),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    if (ok == true && mounted) {
+      try {
+        await AuthService.instance.deleteVendor(v.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Vendor "${v.username}" deleted.'),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete vendor: $e'),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
-  Future<void> _editVendor(Vendor v) async {
+  Future<void> _editVendor(Vendor v, List<Vendor> allVendors) async {
     final userCtrl = TextEditingController(text: v.username);
     final passCtrl = TextEditingController(text: v.password);
     final formKey = GlobalKey<FormState>();
@@ -113,7 +122,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               onPressed: () {
                 if (!formKey.currentState!.validate()) return;
-                if (AuthService.instance.vendorUsernameExists(
+                if (AuthService.instance.vendorUsernameExistsInList(
+                  allVendors,
                   userCtrl.text,
                   ignoreId: v.id,
                 )) {
@@ -134,28 +144,36 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     );
 
-    if (saved == true) {
-      AuthService.instance.updateVendor(
-        v.id,
-        username: userCtrl.text,
-        password: passCtrl.text,
-      );
-      _refresh();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Vendor updated successfully.'),
-          backgroundColor: Color(0xFF16A34A),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    if (saved == true && mounted) {
+      try {
+        await AuthService.instance.updateVendor(
+          v.id,
+          username: userCtrl.text,
+          password: passCtrl.text,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Vendor updated successfully.'),
+            backgroundColor: Color(0xFF16A34A),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update vendor: $e'),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final vendors = AuthService.instance.vendors;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
@@ -187,38 +205,53 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Vendors',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${vendors.length} vendor${vendors.length == 1 ? '' : 's'} registered',
-                    style: const TextStyle(
-                        fontSize: 13, color: Color(0xFF64748B)),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: vendors.isEmpty
-                        ? _emptyState()
-                        : ListView.separated(
-                            itemCount: vendors.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, i) {
-                              final v = vendors[i];
-                              return _vendorCard(v);
-                            },
-                          ),
-                  ),
-                ],
+              child: StreamBuilder<List<Vendor>>(
+                stream: AuthService.instance.vendorsStream,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text('Error: ${snapshot.error}',
+                          style: const TextStyle(color: Color(0xFFDC2626))),
+                    );
+                  }
+                  final vendors = snapshot.data ?? [];
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Vendors',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${vendors.length} vendor${vendors.length == 1 ? '' : 's'} registered',
+                        style: const TextStyle(
+                            fontSize: 13, color: Color(0xFF64748B)),
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(
+                        child: vendors.isEmpty
+                            ? _emptyState()
+                            : ListView.separated(
+                                itemCount: vendors.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 12),
+                                itemBuilder: (context, i) {
+                                  final v = vendors[i];
+                                  return _vendorCard(v, vendors);
+                                },
+                              ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -227,7 +260,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _vendorCard(Vendor v) {
+  Widget _vendorCard(Vendor v, List<Vendor> allVendors) {
     return Card(
       elevation: 1.5,
       shape: RoundedRectangleBorder(
@@ -297,7 +330,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               tooltip: 'Edit',
               icon: const Icon(Icons.edit_outlined,
                   color: Color(0xFF2563EB)),
-              onPressed: () => _editVendor(v),
+              onPressed: () => _editVendor(v, allVendors),
             ),
             IconButton(
               tooltip: 'Delete',

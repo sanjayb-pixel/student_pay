@@ -30,10 +30,9 @@ class _VendorLoginScreenState extends State<VendorLoginScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 250));
 
-    final Vendor? v = AuthService.instance
-        .vendorLogin(_userCtrl.text, _passCtrl.text);
+    final Vendor? v = await AuthService.instance
+        .vendorLoginAsync(_userCtrl.text, _passCtrl.text);
 
     if (!mounted) return;
     setState(() => _loading = false);

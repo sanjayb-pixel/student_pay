@@ -28,32 +28,27 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (AuthService.instance.employeeUsernameExists(
-      widget.vendor.id,
-      _userCtrl.text,
-    )) {
-      _snack('Employee username already exists for this vendor.',
-          color: const Color(0xFFDC2626));
-      return;
-    }
-
+    // Check for duplicate username by fetching current employees
     setState(() => _saving = true);
-    await Future.delayed(const Duration(milliseconds: 200));
+    try {
+      await AuthService.instance.addEmployee(
+        vendorId: widget.vendor.id,
+        username: _userCtrl.text,
+        password: _passCtrl.text,
+      );
 
-    AuthService.instance.addEmployee(
-      vendorId: widget.vendor.id,
-      username: _userCtrl.text,
-      password: _passCtrl.text,
-    );
-
-    if (!mounted) return;
-    setState(() => _saving = false);
-
-    _userCtrl.clear();
-    _passCtrl.clear();
-
-    _snack('Employee created successfully.',
-        color: const Color(0xFF16A34A));
+      if (!mounted) return;
+      _userCtrl.clear();
+      _passCtrl.clear();
+      _snack('Employee created successfully.',
+          color: const Color(0xFF16A34A));
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Failed to create employee: $e',
+          color: const Color(0xFFDC2626));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _snack(String msg, {required Color color}) {

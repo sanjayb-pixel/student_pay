@@ -26,28 +26,25 @@ class _AddVendorScreenState extends State<AddVendorScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (AuthService.instance.vendorUsernameExists(_userCtrl.text)) {
-      _snack('Vendor username already exists.',
-          color: const Color(0xFFDC2626));
-      return;
-    }
-
     setState(() => _saving = true);
-    await Future.delayed(const Duration(milliseconds: 200));
+    try {
+      await AuthService.instance.addVendor(
+        username: _userCtrl.text,
+        password: _passCtrl.text,
+      );
 
-    AuthService.instance.addVendor(
-      username: _userCtrl.text,
-      password: _passCtrl.text,
-    );
-
-    if (!mounted) return;
-    setState(() => _saving = false);
-
-    _userCtrl.clear();
-    _passCtrl.clear();
-
-    _snack('Vendor created successfully.',
-        color: const Color(0xFF16A34A));
+      if (!mounted) return;
+      _userCtrl.clear();
+      _passCtrl.clear();
+      _snack('Vendor created successfully.',
+          color: const Color(0xFF16A34A));
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Failed to create vendor: $e',
+          color: const Color(0xFFDC2626));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _snack(String msg, {required Color color}) {
